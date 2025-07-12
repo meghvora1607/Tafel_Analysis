@@ -6,30 +6,40 @@ from polcurvefit import polcurvefit
 import os
 import io
 
-# Constants for corrosion rate
-AREA_CM2 = 0.503
-EQUIV_WEIGHT = 27.0
-DENSITY = 2.7
+# Constants
+AREA_CM2 = 0.503     # 8 mm diameter
+EQUIV_WEIGHT = 27.0  # for aluminum
+DENSITY = 2.7        # g/cm³
 
 # Corrosion rate formula
 def corrosion_rate(Icorr):
     return (0.00327 * Icorr * EQUIV_WEIGHT) / (DENSITY * AREA_CM2)
 
-# App Title
-st.title("Tafel Fitting App – Mixed Activation-Diffusion Control")
-st.write("Upload Excel files with electrochemical data (Potential vs Current).")
+# Title
+st.title("🔬 Tafel Fit App – Mixed Activation–Diffusion Control")
+st.write("Upload `.xlsx` files (potential vs current), and get fitted Tafel parameters and plots.")
 
-# File upload
-uploaded_files = st.file_uploader("Upload one or more .xlsx files", type=["xlsx"], accept_multiple_files=True)
+# File uploader
+uploaded_files = st.file_uploader("Upload one or more Excel files", type=["xlsx"], accept_multiple_files=True)
 
 if uploaded_files:
     results = []
+
     for file in uploaded_files:
         try:
             df = pd.read_excel(file, skiprows=6, names=["E", "I"]).dropna()
+
+            # Ensure numeric and clean
+            df = df.apply(pd.to_numeric, errors='coerce').dropna()
+            df = df[np.isfinite(df["E"]) & np.isfinite(df["I"])]
+
             E = df["E"].to_numpy()
             I = df["I"].to_numpy()
 
+            if len(E) < 10:
+                raise ValueError("Too few valid points after cleaning.")
+
+            # Fitting
             Pol = polcurvefit(E, I, R=0, sample_surface=AREA_CM2 / 1e4)
             result = Pol.mixed_pol_fit(
                 window=[E.min(), E.max()],
@@ -38,6 +48,7 @@ if uploaded_files:
                 W=80
             )
 
+            # Extract parameters
             Ecorr = result.get("Ecorr", np.nan)
             Icorr = result.get("Icorr", np.nan)
             beta_a = result.get("beta_a", np.nan)
@@ -45,6 +56,7 @@ if uploaded_files:
             Ilim = result.get("Ilim", np.nan)
             rate = corrosion_rate(Icorr)
 
+            # Store
             results.append({
                 "File": file.name,
                 "Ecorr (V)": Ecorr,
@@ -58,17 +70,18 @@ if uploaded_files:
             # Plot
             fig = plt.figure(figsize=(7, 5))
             Pol.plotting(figure=fig)
-            st.subheader(f"Fit: {file.name}")
+            st.subheader(f"📉 Fitted Plot – {file.name}")
             st.pyplot(fig)
 
         except Exception as e:
-            st.error(f"Error processing {file.name}: {e}")
+            st.error(f"❌ Error in file {file.name}: {e}")
 
-    # Show result table
-    df_results = pd.DataFrame(results)
-    st.subheader("Fitting Results")
-    st.dataframe(df_results)
+    # Show table
+    if results:
+        df_results = pd.DataFrame(results)
+        st.subheader("📊 Fitted Parameters")
+        st.dataframe(df_results)
 
-    # CSV download
-    csv = df_results.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Download Results as CSV", csv, file_name="tafel_fit_results.csv", mime="text/csv")
+        # Download button
+        csv = df_results.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Results as CSV", csv, file_name="tafel_fits.csv", mime="text/csv")
